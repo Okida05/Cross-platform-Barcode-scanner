@@ -278,7 +278,7 @@ function openBrowser(url) {
 }
 
 // Function to open default browser (already defined earlier)
-
+const PORT = process.env.PORT || 5000;
 function startServer() {
   server.listen(PORT, '0.0.0.0', () => {
     const ips = getLocalIPs();
