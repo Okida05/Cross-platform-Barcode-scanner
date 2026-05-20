@@ -1,0 +1,21 @@
+# Dependency directories
+node_modules/
+
+# Production builds
+frontend/dist/
+
+# Expo / EAS build files
+mobile/.expo/
+mobile/.eas/
+mobile/web-build/
+
+# IDE / System files
+.vscode/
+.idea/
+.DS_Store
+*.log
+
+# Large compiled binaries (exceeds Github's 100MB limit)
+# Note: These should be uploaded to GitHub Releases instead
+server/scanner-server-linux
+server/scanner-server-win.exe

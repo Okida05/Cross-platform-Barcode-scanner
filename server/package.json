@@ -1,0 +1,21 @@
+{
+  "name": "scanner",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.6",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "ip": "^2.0.1",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.3"
+  }
+}
