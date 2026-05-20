@@ -277,19 +277,52 @@ function openBrowser(url) {
   });
 }
 
-// Start Server
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, '0.0.0.0', () => {
-  const ips = getLocalIPs();
-  console.log(`===============================================`);
-  console.log(`  BARCODE SCANNER PC SERVER RUNNING`);
-  console.log(`  Listening on Port: ${PORT}`);
-  console.log(`  Local Access IP Addresses:`);
-  ips.forEach(ip => console.log(`   - http://${ip}:${PORT}`));
-  console.log(`===============================================`);
+// Function to open default browser (already defined earlier)
 
-  // Automatically open default web browser to dashboard
-  setTimeout(() => {
-    openBrowser(`http://localhost:${PORT}`);
-  }, 800);
+function startServer() {
+  server.listen(PORT, '0.0.0.0', () => {
+    const ips = getLocalIPs();
+    console.log(`===============================================`);
+    console.log(`  BARCODE SCANNER PC SERVER RUNNING`);
+    console.log(`  Listening on Port: ${PORT}`);
+    console.log(`  Local Access IP Addresses:`);
+    ips.forEach(ip => console.log(`   - http://${ip}:${PORT}`));
+    console.log(`===============================================`);
+    // Open browser after short delay
+    setTimeout(() => openBrowser(`http://localhost:${PORT}`), 800);
+  });
+}
+
+// Handle server errors, especially port already in use
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.warn(`[Server] Port ${PORT} is already in use. Attempting to free it...`);
+    // Platform-specific command to kill process using the port
+    const platform = process.platform;
+    let killCmd = '';
+    if (platform === 'win32') {
+      // Windows: find PID and kill it
+      killCmd = `netstat -ano | findstr :${PORT}`;
+    } else {
+      // Linux/macOS: use fuser to kill
+      killCmd = `fuser -k ${PORT}/tcp`;
+    }
+    exec(killCmd, (killErr, stdout, stderr) => {
+      if (killErr) {
+        console.error('[Server] Failed to free the port:', killErr.message);
+        process.exit(1);
+      } else {
+        console.log('[Server] Port freed. Restarting server...');
+        // Give a small delay then restart
+        setTimeout(() => startServer(), 500);
+      }
+    });
+  } else {
+    console.error('[Server] Unexpected error:', err);
+    process.exit(1);
+  }
 });
+
+// Initial start
+startServer();
+
