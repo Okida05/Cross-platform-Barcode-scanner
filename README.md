@@ -7,8 +7,8 @@ A production-ready, ultra-low latency (<100ms) barcode scanner system that allow
 ## 📲 Direct Downloads
 
 *   **Android App (APK):** [Download mobile.apk directly from this repository](https://github.com/Okida05/Cross-platform-Barcode-scanner/raw/main/mobile.apk)
-*   **PC Server (Linux):** Executable binary at `server/scanner-server-linux`
-*   **PC Server (Windows):** Standalone executable at `server/scanner-server-win.exe`
+*   **PC Server (Linux):** [Download Linux binary](https://github.com/Okida05/Cross-platform-Barcode-scanner/raw/main/server/scanner-server-linux)
+*   **PC Server (Windows):** [Download Windows executable](https://github.com/Okida05/Cross-platform-Barcode-scanner/raw/main/server/scanner-server-win.exe)
 
 ---
 
@@ -41,25 +41,7 @@ A production-ready, ultra-low latency (<100ms) barcode scanner system that allow
 
 ---
 
-## 🏗️ Architecture Layout
 
-```mermaid
-graph TD
-    subgraph Mobile App (Android APK)
-        Camera[Expo Camera Scanner] -->|Scans Barcode| Handler[App Control Room]
-        Handler -->|Plays feedback| Sound[Haptic & Audio Beep]
-        Handler -->|Sends JSON| WSClient[Socket.IO Client]
-    end
-
-    subgraph PC Server & Dashboard
-        WSServer[Socket.IO Server] <-->|Real-time Websockets| WSClient
-        WSServer <-->|Updates Stream| Dashboard[Vite React Dashboard]
-        WSServer -->|Types Barcode| KeyboardWedge[Keyboard Wedge Simulator]
-    end
-    
-    Dashboard -->|Wedge Mode Settings| WSServer
-    WSServer -->|Pairing Info & QR Code| Dashboard
-```
 
 ---
 
