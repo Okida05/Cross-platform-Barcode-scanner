@@ -151,12 +151,16 @@ export default function App() {
       socketRef.current.disconnect();
     }
 
-    const uri = `http://${serverIp}:${serverPort}`;
+    const Constants = require('expo-constants');
+    const defaultIp = Constants.manifest?.extra?.serverIp || serverIp;
+    const ip = defaultIp || '192.168.1.32'; // fallback if still undefined
+    const uri = `http://${ip}:${serverPort}`;
     setStatusMessage(`Connecting to ${uri}...`);
     
     // Connect to server
     socketRef.current = io(uri, {
-      transports: ['polling', 'websocket'],
+      // Prefer WebSocket first; fallback to polling if WS fails
+      transports: ['websocket', 'polling'],
       forceNew: true,
       timeout: 5000,
       reconnectionDelay: 1000,
