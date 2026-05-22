@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  Switch,
   ActivityIndicator,
   Alert,
   Vibration,
@@ -19,6 +18,13 @@ import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { io } from 'socket.io-client';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// IMPORTANT: NEVER use localhost / 127.0.0.1 / 0.0.0.0 here.
+// In a compiled APK, those point to the phone itself, NOT the PC server.
+// The user enters the PC LAN IP (e.g. 192.168.1.32) at pairing time,
+// which gets stored and reused on every subsequent launch.
+// ─────────────────────────────────────────────────────────────────────────────
+
 const STORAGE_KEYS = {
   SERVER_CONFIG: '@server_config',
   DUPLICATE_DELAY: '@duplicate_delay',
@@ -28,43 +34,50 @@ const STORAGE_KEYS = {
   INVENTORY_MODE: '@inventory_mode',
 };
 
+// Connection retry config (exponential backoff)
+const RECONNECT_BASE_MS   = 2000;  // first retry after 2 s
+const RECONNECT_MAX_MS    = 30000; // cap at 30 s
+const RECONNECT_MAX_TRIES = 15;    // give up after this many attempts
+
 export default function App() {
   const [permission, requestPermission] = useCameraPermissions();
   
-  // App Config States
-  const [serverIp, setServerIp] = useState('');
+  // Server Config
+  const [serverIp, setServerIp]     = useState('');
   const [serverPort, setServerPort] = useState('5000');
   const [isConfigured, setIsConfigured] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
-  
+  const [isConnected, setIsConnected]   = useState(false);
+  const [isTesting, setIsTesting]       = useState(false);  // connection test in progress
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
+
   // Scan settings
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [soundEnabled, setSoundEnabled]         = useState(true);
   const [vibrationEnabled, setVibrationEnabled] = useState(true);
-  const [duplicateDelay, setDuplicateDelay] = useState(1500); // ms
-  const [inventoryMode, setInventoryMode] = useState(false);
-  const [torchEnabled, setTorchEnabled] = useState(false);
-  
+  const [duplicateDelay, setDuplicateDelay]     = useState(1500);
+  const [inventoryMode, setInventoryMode]       = useState(false);
+  const [torchEnabled, setTorchEnabled]         = useState(false);
+
   // App State
   const [scanningActive, setScanningActive] = useState(true);
-  const [pairingMode, setPairingMode] = useState(false);
-  const [history, setHistory] = useState([]);
-  const [statusMessage, setStatusMessage] = useState('Enter PC details or scan Pairing QR Code');
-  
-  // References
-  const socketRef = useRef(null);
-  const soundObjectRef = useRef(new Audio.Sound());
-  const lastScanTimesRef = useRef({}); // To track duplicate scans per barcode content
+  const [pairingMode, setPairingMode]       = useState(false);
+  const [history, setHistory]               = useState([]);
+  const [statusMessage, setStatusMessage]   = useState('Enter PC details or scan Pairing QR Code');
+
+  // Offline scan queue – flushes automatically once connection is restored
+  const offlineQueueRef   = useRef([]);
+  const socketRef         = useRef(null);
+  const reconnectTimerRef = useRef(null);
+  const reconnectCountRef = useRef(0);
+  const soundObjectRef    = useRef(new Audio.Sound());
+  const lastScanTimesRef  = useRef({});
 
   // Load configuration and history on startup
   useEffect(() => {
     loadSettings();
     loadSound();
-    
     return () => {
-      // Clean up socket and sound
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-      }
+      clearTimeout(reconnectTimerRef.current);
+      if (socketRef.current) socketRef.current.disconnect();
       soundObjectRef.current.unloadAsync().catch(() => {});
     };
   }, []);
@@ -72,6 +85,7 @@ export default function App() {
   // Set up WebSocket connection when configuration changes
   useEffect(() => {
     if (isConfigured && serverIp && serverPort) {
+      reconnectCountRef.current = 0;
       connectToPC();
     }
   }, [isConfigured, serverIp, serverPort]);
@@ -145,48 +159,106 @@ export default function App() {
     }
   };
 
-  // Establish connection to the PC Server
-  const connectToPC = () => {
-    if (socketRef.current) {
-      socketRef.current.disconnect();
+  // ──────────────────────────────────────────────────────────────────────────
+  // connectToPC  –  builds the LAN URI from the user-supplied IP (never
+  // localhost/127.0.0.1) and creates a Socket.IO socket with:
+  //   • WebSocket-first transport
+  //   • Manual exponential backoff (we manage retries ourselves so the UI
+  //     can show attempt counts and a proper status message)
+  //   • Offline-queue flush on reconnect
+  // ──────────────────────────────────────────────────────────────────────────
+  const connectToPC = useCallback(() => {
+    clearTimeout(reconnectTimerRef.current);
+
+    // Guard: we must have a real LAN IP entered by the user.
+    // NEVER fall back to localhost – that means the phone itself in a prod APK.
+    if (!serverIp || serverIp.trim() === '') {
+      console.warn('[Socket] No server IP configured – skipping connect.');
+      return;
     }
 
-    const Constants = require('expo-constants');
-    const defaultIp = Constants.manifest?.extra?.serverIp || serverIp;
-    const ip = defaultIp || '192.168.1.32'; // fallback if still undefined
-    const uri = `http://${ip}:${serverPort}`;
-    setStatusMessage(`Connecting to ${uri}...`);
-    
-    // Connect to server
-    socketRef.current = io(uri, {
-      // Prefer WebSocket first; fallback to polling if WS fails
-      transports: ['websocket', 'polling'],
-      forceNew: true,
-      timeout: 5000,
-      reconnectionDelay: 1000,
-      reconnectionAttempts: 10,
+    // Tear down any existing socket cleanly
+    if (socketRef.current) {
+      socketRef.current.removeAllListeners();
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+
+    const uri = `http://${serverIp.trim()}:${serverPort}`;
+    console.log(`[Socket] Connecting to: ${uri}  (attempt ${reconnectCountRef.current + 1})`);
+    setStatusMessage(`Connecting to ${uri}…`);
+    setIsTesting(true);
+
+    const socket = io(uri, {
+      // Always use WebSocket first – polling causes "xhr poll error" on prod APKs
+      // because the initial XHR handshake goes to the server root and can fail
+      // if the server isn't directly reachable via HTTP on that path.
+      transports: ['websocket'],
+      // Disable Socket.IO's built-in auto-reconnect; we do it ourselves with
+      // exponential backoff so the UI stays accurate.
+      reconnection: false,
+      timeout: 6000,
     });
 
-    socketRef.current.on('connect', () => {
+    socketRef.current = socket;
+
+    socket.on('connect', () => {
+      console.log(`[Socket] ✅ Connected  socket.id=${socket.id}  uri=${uri}`);
+      reconnectCountRef.current = 0;
+      setReconnectAttempt(0);
       setIsConnected(true);
-      setStatusMessage('Connected to PC!');
-      // Register device info
-      socketRef.current.emit('register', {
+      setIsTesting(false);
+      setStatusMessage(`✅ Connected to ${uri}`);
+
+      // Register this device with the server
+      socket.emit('register', {
         type: 'scanner',
-        name: `${Platform.OS === 'android' ? 'Android' : 'iOS'} Scanner App`
+        name: `${Platform.OS === 'android' ? 'Android' : 'iOS'} Scanner`,
       });
+
+      // Flush offline queue
+      if (offlineQueueRef.current.length > 0) {
+        console.log(`[Socket] Flushing ${offlineQueueRef.current.length} queued scans…`);
+        offlineQueueRef.current.forEach(payload => socket.emit('scan-barcode', payload));
+        offlineQueueRef.current = [];
+      }
     });
 
-    socketRef.current.on('connect_error', (err) => {
+    socket.on('connect_error', (err) => {
+      const attempt = reconnectCountRef.current + 1;
+      console.warn(`[Socket] ❌ connect_error (attempt ${attempt}): ${err.message}`);
       setIsConnected(false);
-      setStatusMessage(`Connection Error: ${err.message || 'Unknown'}. Reconnecting...`);
+      setIsTesting(false);
+
+      if (attempt >= RECONNECT_MAX_TRIES) {
+        setStatusMessage(`Cannot reach ${uri} after ${attempt} attempts. Tap "Reset Pair" to re-enter IP.`);
+        console.error('[Socket] Max reconnect attempts reached. Giving up.');
+        return;
+      }
+
+      // Exponential backoff: 2 s, 4 s, 8 s … capped at 30 s
+      const delay = Math.min(RECONNECT_BASE_MS * 2 ** reconnectCountRef.current, RECONNECT_MAX_MS);
+      reconnectCountRef.current = attempt;
+      setReconnectAttempt(attempt);
+      setStatusMessage(`⚠️ ${err.message} – retry ${attempt}/${RECONNECT_MAX_TRIES} in ${delay / 1000}s…`);
+
+      reconnectTimerRef.current = setTimeout(() => connectToPC(), delay);
     });
 
-    socketRef.current.on('disconnect', () => {
+    socket.on('disconnect', (reason) => {
+      console.warn(`[Socket] ⚠️ Disconnected: ${reason}`);
       setIsConnected(false);
-      setStatusMessage('Disconnected from PC server.');
+
+      // Reconnect unless we deliberately called disconnect()
+      if (reason !== 'io client disconnect') {
+        const delay = Math.min(RECONNECT_BASE_MS * 2 ** reconnectCountRef.current, RECONNECT_MAX_MS);
+        setStatusMessage(`⚠️ Disconnected (${reason}) – reconnecting in ${delay / 1000}s…`);
+        reconnectTimerRef.current = setTimeout(() => connectToPC(), delay);
+      } else {
+        setStatusMessage('Disconnected.');
+      }
     });
-  };
+  }, [serverIp, serverPort]);
 
   // Handle barcode scanned event
   const handleBarcodeScanned = async ({ type, data }) => {
@@ -239,13 +311,18 @@ export default function App() {
     setHistory(updatedHistory);
     AsyncStorage.setItem(STORAGE_KEYS.SCAN_HISTORY, JSON.stringify(updatedHistory));
 
-    // Send to PC in real-time
-    if (isConnected && socketRef.current) {
-      socketRef.current.emit('scan-barcode', {
-        code: data,
-        format: type,
-        timestamp: new Date().toISOString()
-      });
+    // Send to PC in real-time – or enqueue for when connection is restored
+    const payload = {
+      code: data,
+      format: type,
+      timestamp: new Date().toISOString(),
+    };
+    if (isConnected && socketRef.current?.connected) {
+      console.log(`[Scan] Sending barcode: ${data} (${type})`);
+      socketRef.current.emit('scan-barcode', payload);
+    } else {
+      console.warn(`[Scan] Offline – queuing barcode: ${data}`);
+      offlineQueueRef.current.push(payload);
     }
 
     // Debounce temporary pause to visual confirmation
@@ -317,9 +394,25 @@ export default function App() {
   if (!permission.granted) {
     return (
       <View style={styles.loadingContainer}>
-        <Text style={styles.errorText}>We need your permission to show the camera.</Text>
+        <Text style={styles.errorText}>Camera permission is required to scan barcodes.</Text>
         <TouchableOpacity style={styles.primaryButton} onPress={requestPermission}>
           <Text style={styles.primaryButtonText}>Grant Camera Permission</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // Show a "testing connection" spinner before revealing the scanner page
+  if (isConfigured && isTesting && !isConnected) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#10B981" />
+        <Text style={styles.loadingText}>Testing connection to{"\n"}{serverIp}:{serverPort}</Text>
+        {reconnectAttempt > 0 && (
+          <Text style={styles.retryText}>Attempt {reconnectAttempt}/{RECONNECT_MAX_TRIES}</Text>
+        )}
+        <TouchableOpacity style={[styles.resetButton, { marginTop: 24 }]} onPress={resetConnection}>
+          <Text style={styles.resetButtonText}>Cancel / Change IP</Text>
         </TouchableOpacity>
       </View>
     );
@@ -536,7 +629,15 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 15,
     color: '#9CA3AF',
-    fontSize: 16
+    fontSize: 16,
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  retryText: {
+    marginTop: 8,
+    color: '#F59E0B',
+    fontSize: 14,
+    textAlign: 'center',
   },
   errorText: {
     color: '#EF4444',

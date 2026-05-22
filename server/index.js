@@ -282,13 +282,16 @@ const PORT = process.env.PORT || 5000;
 function startServer() {
   server.listen(PORT, '0.0.0.0', () => {
     const ips = getLocalIPs();
-    console.log(`===============================================`);
+    const primaryIp = ips.find(ip => ip.startsWith('192.168.') || ip.startsWith('10.')) || ips[0] || 'YOUR_PC_IP';
+    console.log(`\n===============================================`);
     console.log(`  BARCODE SCANNER PC SERVER RUNNING`);
-    console.log(`  Listening on Port: ${PORT}`);
-    console.log(`  Local Access IP Addresses:`);
+    console.log(`  Listening on port: ${PORT}  (all interfaces)`);
+    console.log(`-----------------------------------------------`);
+    console.log(`  LAN IP addresses (enter in mobile app):`);
     ips.forEach(ip => console.log(`   - http://${ip}:${PORT}`));
-    console.log(`===============================================`);
-    // Open browser after short delay
+    console.log(`-----------------------------------------------`);
+    console.log(`  >>> Use this IP in the mobile app: ${primaryIp}`);
+    console.log(`===============================================\n`);
     setTimeout(() => openBrowser(`http://localhost:${PORT}`), 800);
   });
 }
