@@ -18,6 +18,14 @@
         {
           "cameraPermission": "Allow this app to access the camera to scan barcodes."
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
       ]
     ],
     "ios": {
@@ -30,7 +38,6 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.scanner.wifibarcode",
-      "usesCleartextTraffic": true,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.INTERNET",
