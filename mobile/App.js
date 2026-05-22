@@ -190,14 +190,16 @@ export default function App() {
     setIsTesting(true);
 
     const socket = io(uri, {
-      // Always use WebSocket first – polling causes "xhr poll error" on prod APKs
-      // because the initial XHR handshake goes to the server root and can fail
-      // if the server isn't directly reachable via HTTP on that path.
-      transports: ['websocket'],
+      // Allow polling first so Socket.IO completes the HTTP handshake, then
+      // upgrades to WebSocket. Forcing websocket-only skips this handshake and
+      // causes "WebSocket error" in standalone APKs even when cleartext is allowed.
+      transports: ['polling', 'websocket'],
+      upgrade: true,
       // Disable Socket.IO's built-in auto-reconnect; we do it ourselves with
       // exponential backoff so the UI stays accurate.
       reconnection: false,
-      timeout: 6000,
+      timeout: 8000,
+      forceNew: true,
     });
 
     socketRef.current = socket;
