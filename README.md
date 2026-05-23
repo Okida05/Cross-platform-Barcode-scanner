@@ -60,7 +60,10 @@ We have pre-compiled standalone single-file executables for Linux and Windows us
 
 *   **Linux Standalone Binary:** Located at `server/scanner-server-linux`
     *   To run: `./server/scanner-server-linux`
-    *   *(Note: Keyboard wedge mode on Linux compiled binary requires `xclip` and `xdotool` to simulate pasting. Install them via your package manager, e.g. `sudo dnf install xclip xdotool` or `sudo apt install xclip xdotool`)*
+    *   **🚨 IMPORTANT LINUX REQUIREMENT:** Keyboard wedge mode on Linux compiled binary REQUIRES `xclip` and `xdotool` to simulate pasting. It will NOT type barcodes without them. 
+        *   Install on Ubuntu/Debian: `sudo apt install xclip xdotool`
+        *   Install on Fedora/RedHat: `sudo dnf install xclip xdotool`
+        *   Install on Arch: `sudo pacman -S xclip xdotool`
 *   **Windows Standalone Binary:** Located at `server/scanner-server-win.exe`
     *   To run: Double-click or run `server/scanner-server-win.exe` in cmd/PowerShell.
     *   *(Note: Keyboard wedge mode on Windows compiled binary automatically uses native PowerShell script execution to set the clipboard and simulate pasting, requiring no external tools!)*
