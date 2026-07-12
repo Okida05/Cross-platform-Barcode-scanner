@@ -6,6 +6,7 @@ const qrcode = require('qrcode');
 const os = require('os');
 const path = require('path');
 const { exec } = require('child_process');
+const fs = require('fs');
 
 let keyboard = null;
 let Key = null;
@@ -25,8 +26,19 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Serve frontend build static files
-app.use(express.static(path.join(__dirname, '../frontend/dist')));
+// Serve frontend build static files (or embedded fallback when dist/ not found)
+const distPath = path.join(__dirname, '../frontend/dist');
+let usingEmbedded = false;
+try {
+  fs.accessSync(path.join(distPath, 'index.html'));
+  app.use(express.static(distPath));
+  console.log('[Frontend] Serving from filesystem:', distPath);
+} catch {
+  const { serveEmbedded } = require('./embeds');
+  app.use(serveEmbedded);
+  usingEmbedded = true;
+  console.log('[Frontend] Using embedded frontend (dist folder not found)');
+}
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -254,10 +266,12 @@ io.on('connection', (socket) => {
   });
 });
 
-// Fallback to React index.html for UI Routing
-app.use((req, res) => {
-  res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
-});
+// Fallback to index.html for UI Routing (filesystem mode only; embedded handles it internally)
+if (!usingEmbedded) {
+  app.use((req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
 
 // Function to open default browser
 function openBrowser(url) {
